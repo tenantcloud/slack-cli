@@ -512,7 +512,7 @@ function fileupload() {
         \"title\": \"$__slack_message\"
       }],
       \"channel_id\": \"$__slack_channel_id\"
-    }"
+    }" | jq -r '.ok'
 }
 
 function init() {
