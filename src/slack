@@ -5,6 +5,8 @@ etcdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -n "${SLACK_CLI_TOKEN}" ]; then
   token="${SLACK_CLI_TOKEN}"
+elif [ -n "${SLACK_TOKEN}" ]; then
+  token="${SLACK_TOKEN}"
 elif [ -r "${etcdir}/.slack" ] && [ -f "${etcdir}/.slack" ]; then
   token=$(sed -n '1p' < "${etcdir}/.slack")
 elif [ -r "${HOME}/.slack" ] && [ -f "${HOME}/.slack" ]; then
@@ -484,50 +486,33 @@ function filelist() {
 }
 
 function fileupload() {
-  [ -n "${stdin}" ] && [ -z "${file}" ] && file=${stdin}
+  __upload_file_path=$file
+  __upload_file_name=$filename
+  __slack_channel_id=$channels
+  __slack_message=$comment
+  SLACK_FILE_SIZE=$(stat -c%s "$__upload_file_path")
 
-  if [ -f "${file}" ]; then
-    local _file=${file}
+  SLACK_UPLOAD_RESPONSE=$(curl -s -X POST https://slack.com/api/files.getUploadURLExternal \
+    --header "Authorization: Bearer $SLACK_TOKEN" \
+    --header "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "length=$SLACK_FILE_SIZE" \
+    --data-urlencode "filename=$__upload_file_name")
+  
+  SLACK_UPLOAD_URL=$(echo "$SLACK_UPLOAD_RESPONSE" | jq -r '.upload_url')
+  SLACK_FILE_ID=$(echo "$SLACK_UPLOAD_RESPONSE" | jq -r '.file_id')
 
-    case "${filename}" in
-      '') local _filename=$(basename ${file}) ;;
-      *) local _filename=${filename} ;;
-    esac
-  else
-    local _content=${file}
+  curl -s -X POST "$SLACK_UPLOAD_URL" --header "Authorization: Bearer $SLACK_TOKEN" --form "file=@$__upload_file_path"
 
-    case "${filename}" in
-      '') local _filename='stdin' ;;
-      *) local _filename=${filename} ;;
-    esac
-  fi
-
-  case "${_file}" in
-    '')
-      local msg=$(\
-        curl -s -X POST https://slack.com/api/files.upload \
-          ${channels:+ --data-urlencode "channels=${channels}"} \
-          ${comment:+ --data-urlencode "initial_comment=${comment}"} \
-          ${_content:+ --data-urlencode "content=${_content}"} \
-          ${_filename:+ --data-urlencode "filename=${_filename}"} \
-          ${filetype:+ --data-urlencode "filetype=${filetype}"} \
-          ${title:+ --data-urlencode "title=${title}"} \
-          --data-urlencode "token=${token}")
-    ;;
-    *)
-      local msg=$(\
-        curl -s -X POST https://slack.com/api/files.upload \
-          ${channels:+ --form-string "channels=${channels}"} \
-          ${comment:+ --form "initial_comment=${comment}"} \
-          ${_file:+ --form "file=@${_file}"} \
-          ${_filename:+ --form "filename=${_filename}"} \
-          ${filetype:+ --form "filetype=${filetype}"} \
-          ${title:+ --form "title=${title}"} \
-          --form "token=${token}")
-    ;;
-  esac
-
-  jqify "${msg}"
+  curl -s -X POST https://slack.com/api/files.completeUploadExternal \
+    --header "Authorization: Bearer $SLACK_TOKEN" \
+    --header "Content-Type: application/json" \
+    --data "{
+      \"files\": [{
+        \"id\": \"$SLACK_FILE_ID\",
+        \"title\": \"$__slack_message\"
+      }],
+      \"channel_id\": \"$__slack_channel_id\"
+    }" | jq -r '.ok'
 }
 
 function init() {
